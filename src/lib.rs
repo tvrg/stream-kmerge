@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::task::Poll;
 
 use futures::{Stream, StreamExt};
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 
 struct HeadTail<S>
 where
@@ -51,15 +51,16 @@ where
     }
 }
 
-#[pin_project]
-pub struct KWayMerge<S, F>
-where
-    S: Stream,
-{
-    #[pin]
-    unpolled: Vec<S>,
-    heap: Vec<HeadTail<S>>,
-    compare: F,
+pin_project! {
+    pub struct KWayMerge<S, F>
+    where
+        S: Stream,
+    {
+        #[pin]
+        unpolled: Vec<S>,
+        heap: Vec<HeadTail<S>>,
+        compare: F,
+    }
 }
 
 impl<S, F> Stream for KWayMerge<S, F>
