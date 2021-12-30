@@ -2,12 +2,12 @@
 name = "stream-kmerge"
 version = "0.1.0"
 edition = "2021"
-author = "Thomas von Rosenberg <thomas@von-rosenberg.eu>"
+authors = ["Thomas von Rosenberg <thomas@von-rosenberg.eu>"]
 
 [dependencies]
 futures = "0.3.19"
 pin-project-lite = "0.2.7"
 
 [dev-dependencies]
-tokio = { version = "1.15.0", features = ["rt", "macros"] }
+tokio = { version = "1.15.0", features = ["rt", "macros", "sync"] }
 tokio-stream = "0.1.8"

@@ -1,7 +1,11 @@
 use std::cmp::Ordering;
 use std::task::Poll;
 
-use futures::{Stream, StreamExt};
+use futures::{
+    future::{join_all, JoinAll},
+    stream::StreamFuture,
+    FutureExt, Stream, StreamExt,
+};
 use pin_project_lite::pin_project;
 
 struct HeadTail<S>
@@ -55,9 +59,10 @@ pin_project! {
     pub struct KWayMerge<S, F>
     where
         S: Stream,
+        S: Unpin,
     {
-        #[pin]
-        unpolled: Vec<S>,
+        initial: Option<JoinAll<StreamFuture<S>>>,
+        next: Option<S>,
         heap: Vec<HeadTail<S>>,
         compare: F,
     }
@@ -75,10 +80,30 @@ where
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        let mut this = self.project();
-        while let Some(mut s) = this.unpolled.pop() {
-            let next = s.poll_next_unpin(cx);
-            match next {
+        let this = self.project();
+        if let Some(init_fut) = this.initial.as_mut() {
+            match init_fut.poll_unpin(cx) {
+                Poll::Pending => {
+                    return Poll::Pending;
+                }
+                Poll::Ready(xs) => {
+                    *this.initial = None;
+                    xs.into_iter()
+                        .filter_map(|(head_option, tail)| {
+                            head_option.map(|head| HeadTail { head, tail })
+                        })
+                        .for_each(|head_tail| this.heap.push(head_tail));
+                    this.heap
+                        .sort_unstable_by(|x, y| (this.compare)(&y.head, &x.head));
+                }
+            }
+        }
+        if let Some(mut next_stream) = this.next.take() {
+            match next_stream.next().poll_unpin(cx) {
+                Poll::Pending => {
+                    this.next.replace(next_stream);
+                    return Poll::Pending;
+                }
                 Poll::Ready(Some(item)) => {
                     let pos = this
                         .heap
@@ -88,24 +113,21 @@ where
                         pos,
                         HeadTail {
                             head: item,
-                            tail: s,
+                            tail: next_stream,
                         },
                     )
                 }
-                Poll::Ready(None) => (),
-                Poll::Pending => {
-                    this.unpolled.push(s);
-                    return Poll::Pending;
-                }
-            };
+                Poll::Ready(None) => {}
+            }
         }
-        if !this.unpolled.is_empty() {
+
+        if this.next.is_some() {
             return Poll::Pending;
         }
 
         match this.heap.pop() {
             Some(HeadTail { head, tail }) => {
-                this.unpolled.push(tail);
+                this.next.replace(tail);
                 Poll::Ready(Some(head))
             }
             None => Poll::Ready(None),
@@ -113,13 +135,14 @@ where
     }
 }
 
-pub fn merge_by<S, F>(xs: Vec<S>, compare: F) -> KWayMerge<S, F>
+pub fn kmerge_by<S, F>(xs: impl IntoIterator<Item = S>, compare: F) -> KWayMerge<S, F>
 where
-    S: Stream,
-    F: FnMut(&S::Item, &S::Item) -> Ordering,
+    S: Stream + Unpin,
+    F: Fn(&S::Item, &S::Item) -> Ordering,
 {
     KWayMerge {
-        unpolled: xs,
+        initial: Some(join_all(xs.into_iter().map(|x| x.into_future()))),
+        next: None,
         heap: Vec::new(),
         compare,
     }
@@ -127,21 +150,25 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::pin::Pin;
     use std::time::Duration;
 
     use futures::stream;
+    use futures::FutureExt;
+    use futures::Stream;
     use futures::StreamExt;
+    use tokio::sync::oneshot;
     use tokio::time;
     use tokio_stream::wrappers::IntervalStream;
 
-    use super::merge_by;
+    use super::kmerge_by;
 
     #[tokio::test]
     async fn test() {
         let streams = vec![stream::iter(vec![1, 3, 5]), stream::iter(vec![2, 3, 4])];
 
         assert_eq!(
-            merge_by(streams, |x, y| x.cmp(y))
+            kmerge_by(streams, |x, y| x.cmp(y))
                 .collect::<Vec<usize>>()
                 .await,
             vec![1, 2, 3, 3, 4, 5],
@@ -155,11 +182,33 @@ mod test {
             IntervalStream::new(time::interval(Duration::from_nanos(2))),
         ];
 
-        let result = merge_by(streams, |x, y| x.cmp(y))
+        let result = kmerge_by(streams, |x, y| x.cmp(y))
             .take(10)
             .collect::<Vec<_>>()
             .await;
 
         assert_eq!(result.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_initialization() {
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+
+        let s1 = async move {
+            tx1.send(1).unwrap();
+            rx2.await.unwrap()
+        }
+        .into_stream();
+        let s2 = async move {
+            tx2.send(2).unwrap();
+            rx1.await.unwrap()
+        }
+        .into_stream();
+
+        let streams: Vec<Pin<Box<dyn Stream<Item = i32>>>> = vec![Box::pin(s1), Box::pin(s2)];
+
+        let result = kmerge_by(streams, |x, y| x.cmp(y)).collect::<Vec<_>>().await;
+        assert_eq!(result, vec![1, 2]);
     }
 }
