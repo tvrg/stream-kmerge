@@ -8,7 +8,7 @@ authors = ["Thomas von Rosenberg <thomas@von-rosenberg.eu>"]
 readme = "README.md"
 description = "K-way merge for streams"
 keywords = ["stream", "merge", "sort"]
-categories = ["algorithms"]
+categories = ["algorithms", "concurrency", "asynchronous"]
 
 edition = "2021"
 
