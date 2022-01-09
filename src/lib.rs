@@ -33,28 +33,6 @@ where
 {
 }
 
-impl<S> PartialOrd for HeadTail<S>
-where
-    S: Stream,
-    S::Item: PartialOrd,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.head
-            .partial_cmp(&other.head)
-            .map(std::cmp::Ordering::reverse)
-    }
-}
-
-impl<S> Ord for HeadTail<S>
-where
-    S: Stream,
-    S::Item: Ord,
-{
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.head.cmp(&other.head).reverse()
-    }
-}
-
 pin_project! {
     pub struct KWayMerge<S, F>
     where
