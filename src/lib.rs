@@ -17,23 +17,6 @@ where
     tail: S,
 }
 
-impl<S> PartialEq for HeadTail<S>
-where
-    S: Stream,
-    S::Item: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.head.eq(&other.head)
-    }
-}
-
-impl<S> Eq for HeadTail<S>
-where
-    S: Stream,
-    S::Item: Eq,
-{
-}
-
 pub trait KMergePredicate<T> {
     fn kmerge_pred(&mut self, a: &T, b: &T) -> Ordering;
 }
