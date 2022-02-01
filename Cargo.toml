@@ -1,9 +1,10 @@
 [package]
 name = "stream-kmerge"
-version = "0.1.1"
+version = "0.1.2"
 
 license = "MIT/Apache-2.0"
 repository = "https://github.com/tvrg/stream-kmerge"
+documentation = "https://docs.rs/stream-kmerge/"
 authors = ["Thomas von Rosenberg <thomas@von-rosenberg.eu>"]
 readme = "README.md"
 description = "K-way merge for streams"
