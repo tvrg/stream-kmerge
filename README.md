@@ -3,6 +3,7 @@
 [K-way merge](https://en.wikipedia.org/wiki/K-way_merge_algorithm) for rust streams.
 
 [![build_status](https://github.com/tvrg/stream-kmerge/actions/workflows/ci.yml/badge.svg)](https://github.com/tvrg/stream-kmerge/actions)
+[![crates.io](https://img.shields.io/crates/v/stream-kmerge.svg)](https://crates.io/crates/stream-kmerge)
 
 How to use with Cargo:
 
