@@ -8,7 +8,7 @@ How to use with Cargo:
 
 ```toml
 [dependencies]
-stream-kmerge = { git = "https://github.com/tvrg/stream-kmerge.git" }
+stream-kmerge = "0.1"
 ```
 
 How to use in your crate:
