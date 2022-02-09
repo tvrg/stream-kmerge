@@ -18,6 +18,23 @@ How to use in your crate:
 use stream_kmerge::kmerge_by;
 ```
 
+## Example
+
+```rust
+use futures::{stream, StreamExt};
+use stream_kmerge::kmerge_by;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
+
+    assert_eq!(
+        kmerge_by(streams, |x, y| y < x).collect::<Vec<usize>>().await,
+        vec![5, 4, 3, 3, 2, 1],
+    );
+}
+```
+
 ## License
 
 Dual-licensed to be compatible with the Rust project.

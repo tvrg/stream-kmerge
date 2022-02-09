@@ -142,10 +142,7 @@ where
 /// );
 /// # })
 /// ```
-pub fn kmerge_by<S, F>(
-    xs: impl IntoIterator<Item = S>,
-    less_than: F,
-) -> KWayMergeBy<S, F>
+pub fn kmerge_by<S, F>(xs: impl IntoIterator<Item = S>, less_than: F) -> KWayMergeBy<S, F>
 where
     S: Stream + Unpin,
     F: FnMut(&S::Item, &S::Item) -> bool,
@@ -202,10 +199,7 @@ where
 ///
 /// Therefore, `kmerge_generic` is private and the public [`kmerge_by`] explicitly takes a closure
 /// instead of [`KMergePredicate`].
-fn kmerge_generic<S, F>(
-    xs: impl IntoIterator<Item = S>,
-    less_than: F,
-) -> KWayMergeBy<S, F>
+fn kmerge_generic<S, F>(xs: impl IntoIterator<Item = S>, less_than: F) -> KWayMergeBy<S, F>
 where
     S: Stream + Unpin,
     F: KMergePredicate<S::Item>,
@@ -346,3 +340,6 @@ mod test {
         assert_eq!(result, vec![1, 2]);
     }
 }
+
+#[cfg(doctest)]
+doc_comment::doctest!("../README.md");

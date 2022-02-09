@@ -18,6 +18,7 @@ futures = "0.3"
 pin-project-lite = "0.2"
 
 [dev-dependencies]
+doc-comment = "0.3.3"
 tokio = { version = "1", features = ["rt", "macros", "sync"] }
 tokio-stream = "0.1"
 tokio-test = "0.4"
