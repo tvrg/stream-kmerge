@@ -26,11 +26,11 @@ use stream_kmerge::kmerge_by;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
+    let streams = vec![stream::iter(vec![1, 3, 5]), stream::iter(vec![2, 3, 4])];
 
     assert_eq!(
-        kmerge_by(streams, |x, y| y < x).collect::<Vec<usize>>().await,
-        vec![5, 4, 3, 3, 2, 1],
+        kmerge_by(streams, |x: &usize, y: &usize| y.cmp(&x)).collect::<Vec<usize>>().await,
+        vec![1, 2, 3, 3, 4, 5],
     );
 }
 ```

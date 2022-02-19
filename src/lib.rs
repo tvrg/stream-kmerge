@@ -1,57 +1,21 @@
+#![warn(rust_2018_idioms)]
+use std::cmp::Ordering;
 use std::task::Poll;
 
+use binary_heap_plus::BinaryHeap;
+use compare::Compare;
 use futures::future::{join_all, JoinAll};
 use futures::{ready, stream::StreamFuture, FutureExt, Stream, StreamExt};
 use pin_project_lite::pin_project;
 
+/// Head element and tail stream pair
 #[derive(Debug)]
-struct HeadTail<S>
+pub struct HeadTail<S>
 where
     S: Stream,
 {
     head: S::Item,
     tail: S,
-}
-
-/// Make `data` a heap (min-heap w.r.t the sorting).
-fn heapify<T, S>(data: &mut [T], mut less_than: S)
-where
-    S: FnMut(&T, &T) -> bool,
-{
-    for i in (0..data.len() / 2).rev() {
-        sift_down(data, i, &mut less_than);
-    }
-}
-
-/// Sift down element at `index` (`heap` is a min-heap wrt the ordering)
-fn sift_down<T, S>(heap: &mut [T], index: usize, mut less_than: S)
-where
-    S: FnMut(&T, &T) -> bool,
-{
-    debug_assert!(index <= heap.len());
-    let mut pos = index;
-    let mut child = 2 * pos + 1;
-    // Require the right child to be present
-    // This allows to find the index of the smallest child without a branch
-    // that wouldn't be predicted if present
-    while child + 1 < heap.len() {
-        // pick the smaller of the two children
-        // use aritmethic to avoid an unpredictable branch
-        child += less_than(&heap[child + 1], &heap[child]) as usize;
-
-        // sift down is done if we are already in order
-        if !less_than(&heap[child], &heap[pos]) {
-            return;
-        }
-        heap.swap(pos, child);
-        pos = child;
-        child = 2 * pos + 1;
-    }
-    // Check if the last (left) child was an only child
-    // if it is then it has to be compared with the parent
-    if child + 1 == heap.len() && less_than(&heap[child], &heap[pos]) {
-        heap.swap(pos, child);
-    }
 }
 
 pin_project! {
@@ -63,43 +27,65 @@ pin_project! {
     /// See [`.kmerge_by()`](crate::kmerge_by) for more
     /// information.
     #[must_use = "stream adaptors are lazy and do nothing unless consumed"]
-    pub struct KWayMergeBy<S, F>
+    pub struct KWayMergeBy<S, C>
     where
         S: Stream,
         S: Unpin,
+        C: Compare<HeadTail<S>>
     {
         initial: Option<JoinAll<StreamFuture<S>>>,
         next: Option<S>,
-        heap: Vec<HeadTail<S>>,
-        less_than: F,
+        heap: BinaryHeap<HeadTail<S>, C>,
     }
 }
 
-/// A stream adaptor that merges an abitrary number of base streams in ascending order.
-/// If all base streams are sorted (ascending), the result is sorted.
+/// A stream adaptor that merges an abitrary number of base streams in descending order.
+/// If all base streams are sorted (descending), the result is sorted.
 ///
 /// Stream element type is `S::Item`.
 ///
 /// See [`.kmerge()`](crate::kmerge) for more information.
 #[must_use = "stream adaptors are lazy and do nothing unless consumed"]
-pub type KWayMerge<I> = KWayMergeBy<I, KMergeByLt>;
+pub type KWayMerge<I> = KWayMergeBy<I, OrdComparator>;
 
-pub trait KMergePredicate<T> {
-    fn kmerge_pred(&mut self, a: &T, b: &T) -> bool;
-}
+pub struct OrdComparator;
 
-#[derive(Clone, Debug)]
-pub struct KMergeByLt;
-
-impl<T: PartialOrd> KMergePredicate<T> for KMergeByLt {
-    fn kmerge_pred(&mut self, a: &T, b: &T) -> bool {
-        a < b
+impl<S> Compare<HeadTail<S>> for OrdComparator
+where
+    S: Stream,
+    S::Item: Ord,
+{
+    fn compare(&self, l: &HeadTail<S>, r: &HeadTail<S>) -> std::cmp::Ordering {
+        l.head.cmp(&r.head)
     }
 }
 
-impl<T, F: FnMut(&T, &T) -> bool> KMergePredicate<T> for F {
-    fn kmerge_pred(&mut self, a: &T, b: &T) -> bool {
-        self(a, b)
+pub struct FnComparator<F> {
+    f: F,
+}
+
+impl<S, F> Compare<HeadTail<S>> for FnComparator<F>
+where
+    S: Stream,
+    F: Fn(&S::Item, &S::Item) -> Ordering,
+{
+    fn compare(&self, l: &HeadTail<S>, r: &HeadTail<S>) -> std::cmp::Ordering {
+        (self.f)(&l.head, &r.head)
+    }
+}
+
+pub struct KeyComparator<F> {
+    f: F,
+}
+
+impl<S, F, O> Compare<HeadTail<S>> for KeyComparator<F>
+where
+    S: Stream,
+    F: Fn(&S::Item) -> O,
+    O: Ord,
+{
+    fn compare(&self, l: &HeadTail<S>, r: &HeadTail<S>) -> std::cmp::Ordering {
+        (self.f)(&l.head).cmp(&(self.f)(&r.head))
     }
 }
 
@@ -111,20 +97,20 @@ impl<T, F: FnMut(&T, &T) -> bool> KMergePredicate<T> for F {
 /// use futures::{stream, StreamExt};
 /// use stream_kmerge::kmerge;
 ///
-/// let streams = vec![stream::iter(vec![1, 3, 5]), stream::iter(vec![2, 3, 4])];
+/// let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
 ///
 /// assert_eq!(
 ///     kmerge(streams).collect::<Vec<usize>>().await,
-///     vec![1, 2, 3, 3, 4, 5],
+///     vec![5, 4, 3, 3, 2, 1],
 /// );
 /// # })
 /// ```
 pub fn kmerge<S>(xs: impl IntoIterator<Item = S>) -> KWayMerge<S>
 where
     S: Stream + Unpin,
-    S::Item: PartialOrd,
+    S::Item: Ord,
 {
-    assert_stream::<S::Item, _>(kmerge_generic(xs, KMergeByLt))
+    assert_stream::<S::Item, _>(kmerge_generic(xs, OrdComparator))
 }
 
 /// Create a stream that merges elements of the contained streams.
@@ -134,20 +120,47 @@ where
 /// use futures::{stream, StreamExt};
 /// use stream_kmerge::kmerge_by;
 ///
-/// let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
+/// let streams = vec![stream::iter(vec![1, 3, 5]), stream::iter(vec![2, 3, 4])];
 ///
 /// assert_eq!(
-///     kmerge_by(streams, |x, y| y < x).collect::<Vec<usize>>().await,
-///     vec![5, 4, 3, 3, 2, 1],
+///     kmerge_by(streams, |x: &usize, y: &usize| y.cmp(&x)).collect::<Vec<usize>>().await,
+///     vec![1, 2, 3, 3, 4, 5],
 /// );
 /// # })
 /// ```
-pub fn kmerge_by<S, F>(xs: impl IntoIterator<Item = S>, less_than: F) -> KWayMergeBy<S, F>
+pub fn kmerge_by<S, F>(xs: impl IntoIterator<Item = S>, f: F) -> KWayMergeBy<S, FnComparator<F>>
 where
     S: Stream + Unpin,
-    F: FnMut(&S::Item, &S::Item) -> bool,
+    F: Fn(&S::Item, &S::Item) -> Ordering,
 {
-    kmerge_generic(xs, less_than)
+    kmerge_generic(xs, FnComparator { f })
+}
+
+/// Create a stream that merges elements of the contained streams.
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// use futures::{stream, StreamExt};
+/// use stream_kmerge::kmerge_by_key;
+///
+/// let streams = vec![stream::iter(vec![("a", 5), ("a", 3)]), stream::iter(vec![("b", 4), ("b", 4)])];
+///
+/// assert_eq!(
+///     kmerge_by_key(streams, |x: &(&'static str, usize)| x.1).collect::<Vec<_>>().await,
+///     vec![("a", 5), ("b", 4), ("b", 4), ("a", 3)],
+/// );
+/// # })
+/// ```
+pub fn kmerge_by_key<S, F, O>(
+    xs: impl IntoIterator<Item = S>,
+    f: F,
+) -> KWayMergeBy<S, KeyComparator<F>>
+where
+    S: Stream + Unpin,
+    F: Fn(&S::Item) -> O,
+    O: Ord,
+{
+    kmerge_generic(xs, KeyComparator { f })
 }
 
 /// This was originally meant to be [`kmerge_by`], but triggers a compiler bug, if you directly pass
@@ -199,25 +212,24 @@ where
 ///
 /// Therefore, `kmerge_generic` is private and the public [`kmerge_by`] explicitly takes a closure
 /// instead of [`KMergePredicate`].
-fn kmerge_generic<S, F>(xs: impl IntoIterator<Item = S>, less_than: F) -> KWayMergeBy<S, F>
+fn kmerge_generic<S, C>(xs: impl IntoIterator<Item = S>, cmp: C) -> KWayMergeBy<S, C>
 where
     S: Stream + Unpin,
-    F: KMergePredicate<S::Item>,
+    C: Compare<HeadTail<S>>,
 {
     let iter = xs.into_iter();
     let (min_size, _) = iter.size_hint();
     assert_stream::<S::Item, _>(KWayMergeBy {
         initial: Some(join_all(iter.map(|x| x.into_future()))),
         next: None,
-        heap: Vec::with_capacity(min_size),
-        less_than,
+        heap: BinaryHeap::from_vec_cmp(Vec::with_capacity(min_size), cmp),
     })
 }
 
-impl<S, F> Stream for KWayMergeBy<S, F>
+impl<S, C> Stream for KWayMergeBy<S, C>
 where
     S: Stream + Unpin,
-    F: KMergePredicate<S::Item>,
+    C: Compare<HeadTail<S>>,
 {
     type Item = S::Item;
 
@@ -234,33 +246,25 @@ where
                     head_option.map(|head| HeadTail { head, tail })
                 }),
             );
-            heapify(this.heap, |a, b| {
-                this.less_than.kmerge_pred(&a.head, &b.head)
-            });
         }
 
         if let Some(ref mut next_stream) = this.next {
             if let Some(item) = ready!(next_stream.next().poll_unpin(cx)) {
-                this.heap.insert(
-                    0,
-                    HeadTail {
-                        head: item,
-                        tail: this.next.take().unwrap(),
-                    },
-                );
-                sift_down(this.heap, 0, |a, b| {
-                    this.less_than.kmerge_pred(&a.head, &b.head)
+                this.heap.push(HeadTail {
+                    head: item,
+                    tail: this.next.take().unwrap(),
                 });
             }
         }
 
-        if this.heap.is_empty() {
-            return Poll::Ready(None);
-        }
+        match this.heap.pop() {
+            None => Poll::Ready(None),
+            Some(HeadTail { head, tail }) => {
+                this.next.replace(tail);
 
-        let HeadTail { head, tail } = this.heap.remove(0);
-        this.next.replace(tail);
-        Poll::Ready(Some(head))
+                Poll::Ready(Some(head))
+            }
+        }
     }
 }
 
@@ -290,20 +294,34 @@ mod test {
 
     #[tokio::test]
     async fn sync() {
-        let streams = vec![stream::iter(vec![1, 3, 5]), stream::iter(vec![2, 3, 4])];
+        let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
 
         assert_eq!(
             kmerge(streams).collect::<Vec<usize>>().await,
-            vec![1, 2, 3, 3, 4, 5],
+            vec![5, 4, 3, 3, 2, 1],
         );
     }
 
     #[tokio::test]
     async fn by() {
         let streams = vec![stream::iter(vec![5, 3, 1]), stream::iter(vec![4, 3, 2])];
-        let stream = kmerge_by(streams, |x, y| y < x);
+        let stream = kmerge_by(streams, |x: &usize, y: &usize| x.cmp(&y));
 
         assert_eq!(stream.collect::<Vec<usize>>().await, vec![5, 4, 3, 3, 2, 1],);
+    }
+
+    #[tokio::test]
+    async fn by_key() {
+        let streams = vec![
+            stream::iter(vec![("a", 5), ("a", 3)]),
+            stream::iter(vec![("b", 4), ("b", 4)]),
+        ];
+        let stream = kmerge_by_key(streams, |x: &(&'static str, usize)| x.1);
+
+        assert_eq!(
+            stream.collect::<Vec<_>>().await,
+            vec![("a", 5), ("b", 4), ("b", 4), ("a", 3)]
+        );
     }
 
     #[tokio::test]
@@ -337,7 +355,7 @@ mod test {
         let streams: Vec<Pin<Box<dyn Stream<Item = i32>>>> = vec![Box::pin(s1), Box::pin(s2)];
 
         let result = kmerge(streams).collect::<Vec<_>>().await;
-        assert_eq!(result, vec![1, 2]);
+        assert_eq!(result, vec![2, 1]);
     }
 }
 
